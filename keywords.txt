@@ -4,19 +4,26 @@
 # Datatypes (KEYWORD1)
 #######################################
 
-Si4707	KEYWORD1
+Si4707          KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
 #######################################
 
-begin	KEYWORD2
+begin           KEYWORD2
 setWBFrequency	KEYWORD2
 tuneWBFrequency	KEYWORD2
 getWBFrequency	KEYWORD2
-getRSSI	KEYWORD2
-getSNR	KEYWORD2
+getRSQ          KEYWORD2
+getRSSI	        KEYWORD2
+getSNR	        KEYWORD2
 getFreqOffset	KEYWORD2
-printSAMEStatus	KEYWORD2
+getSAMEState    KEYWORD2
+getSAMESize     KEYWORD2
+getSAMEMEssage  KEYWORD2
+clearSAMEBuffer KEYWORD2
+getASQ          KEYWORD2
 setMuteVolume	KEYWORD2
 setVolume	KEYWORD2
+setSNR          KEYWORD2
+setRSSI         KEYWORD2
