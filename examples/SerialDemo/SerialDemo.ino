@@ -50,6 +50,10 @@ unsigned long tuneFrequency = 162550; // 162.550 MHz
 // Initial volume level:
 int rxVolume = 63;  // Maximum loudness (should be between 0 and 63)
 
+// SAME state
+byte state = 0;
+byte prevState = 0;
+
 // The setup function initializes Serial, the Si4707, and tunes the Si4707
 //  to the WB station defined at the top of this sketch (tuneFrequency).
 //  To finish, it prints out the interaction menu over serial.
@@ -58,38 +62,100 @@ void setup()
   // Serial is used to interact with the menu, and to print debug info
   Serial.begin(9600);
 
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for Leonardo only
-  }
+  // Wait for serial port to connect, needed for Leonardo only
+  while (!Serial);
 
-  if (!wb.begin())
+  // First, begin() must be called to initialize the Si4707
+  if (wb.begin())
+    Serial.println("Successfully connected to Si4707");
+  else
+  {
+    Serial.print("Didn't connect to an Si4707");
     while(1);
+  }
 
   // After initializing, we can tune to a WB frequency. Use the
   //  setWBFrequency() function to tune to a frequency. The frequency
   //  parameter given to the function should be your chosen frequency in
   //  kHz. So to tune to 162.55 MHz, send 162550. The tuneFrequency
   //  variable is defined globablly near the top of this sketch.
-  if (wb.setWBFrequency(tuneFrequency))
-  {
-    Serial.println(F("Tune Success!"));
+  if (!wb.setWBFrequency(tuneFrequency)) {
+    Serial.println("Tune unsuccessful");
+    return;
   }
-  else
-    Serial.println(F("Tune unsuccessful"));
 
-  // After tuning, check out the serial monitor to interact with the menu.
+  Serial.println("Tune Success!");
+  Serial.println();
+
   printMenu();
 }
 
 void loop()
 {
+  // Get state
+  byte state = wb.getSAMEState();
+  if (state != prevState) {
+    printState(state);
+    prevState = state;
+  }
+
   // Wait for a serial byte to be received:
-  while( !Serial.available() )
-    ;
-  char c = Serial.read();
-  // Once received, act on the serial input:
-  switch (c)
-  {
+  if (Serial.available()) {
+    // Once received, act on the serial input:
+    exec(Serial.read());
+  }
+}
+
+void printState (byte state)
+{
+  Serial.print("SAME state = ");
+  switch (state) {
+  case 0:
+    Serial.println("End of message");
+    break;
+  case 1:
+    Serial.println("Preamble detected");
+    break;
+  case 2:
+    Serial.println("Receiving SAME header message");
+    break;
+  case 3:
+    Serial.println("SAME header message complete");
+    // Get message size
+    byte size = wb.getSAMESize();
+    if (size > 0) {
+      // Print message
+      printMessage(size);
+    }
+    break;
+  default:
+    Serial.println("Unknown state!");
+    break;
+  }
+}
+
+void printMessage(byte size)
+{
+
+  // Get message data
+  byte msg[size];
+  wb.getSAMEMessage(size, msg);
+
+  // Print message
+  Serial.print("SAME message = ");
+  for (int i = 0; i < size; i++)
+    {
+      if (msg[i] > 31 && msg[i] < 127)
+        Serial.write(msg[i]);
+      else
+        Serial.print(".");
+    }
+  Serial.println();
+}
+
+void exec(char cmd)
+{
+  switch (cmd) {
   case 'u':
     wb.tuneWBFrequency(1);  // Tune up 1 increment (2.5kHz)
     break;
@@ -102,14 +168,11 @@ void loop()
   case 'D':
     wb.tuneWBFrequency(-10);  // Tune down 10 increments (25kHz)
     break;
-  case 's':
-    wb.printSAMEStatus();
-    break;
   case 'r':
     Serial.print("RSSI = ");
     Serial.println(wb.getRSSI());
     break;
-  case 'S':
+  case 's':
     Serial.print("SNR = ");
     Serial.println(wb.getSNR());
     break;
@@ -137,8 +200,10 @@ void loop()
     wb.setVolume(--rxVolume); // decrement volume
     break;
   case 'h':
-  default:
     printMenu(); // print the help menu
+    break;
+  default:
+    Serial.println("Unknown command!");
     break;
   }
 }
@@ -153,9 +218,8 @@ void printMenu()
   Serial.println(F("\t d) Fine tune down (-2.5kHz)"));
   Serial.println(F("\t U) Coarse tune up (+25kHz)"));
   Serial.println(F("\t D) Coarse tune down (-25kHz)"));
-  Serial.println(F("\t s) Get SAME status"));
   Serial.println(F("\t r) Get RSSI"));
-  Serial.println(F("\t S) Get SNR"));
+  Serial.println(F("\t s) Get SNR"));
   Serial.println(F("\t o) Get Frequency offset"));
   Serial.println(F("\t f) Get Tune Frequency"));
   Serial.println(F("\t m) Mute audio output"));
