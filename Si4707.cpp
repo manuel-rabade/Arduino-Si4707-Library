@@ -15,18 +15,10 @@ boolean Si4707::begin()
   //  of the Part Number reported by the Si4707, which can be checked
   //  to verify communication. It should always be 7.
   byte partNumber = initSi4707();
-
-  return partNumber == 7;
-
-  // if (partNumber == 7)
-    // Serial.println("Successfully connected to Si4707");
-  // else
-  // {
-    // Serial.print("Didn't connect to an Si4707...Error: ");
-    // Serial.println(partNumber);
-    // while(1)
-      // ;
-  // }
+  if (partNumber == 7)
+    return true;
+  else
+    return false;
 }
 
 // initSi4707 performs the following functions, in sequence:
@@ -69,7 +61,7 @@ byte Si4707::initSi4707()
 // Ths function sets the Si4707 to the freq it receives.
 // freq should represent the frequency desired in kHz.
 // e.g. 162400 will tune the radio to 162.400 MHz.
-byte Si4707::setWBFrequency(long freq)
+byte Si4707::setWBFrequency(unsigned long freq)
 {
   // Keep tuned frequency between valid limits (162.4 - 162.55 MHz)
   long freqKhz = constrain(freq, 162400, 162550);;
@@ -106,6 +98,13 @@ unsigned Si4707::getWBFrequency()
   return command_Tune_Status(0, 2);
 }
 
+// Returns true if the channel is still valid
+boolean Si4707::getRSQ()
+{
+  // See si4707_system_functions.ino for info on command_RSQ_Status
+  return command_RSQ_Status(2) & 0x1;
+}
+
 // Returns the recieved signal strength reported by Si4707
 byte Si4707::getRSSI()
 {
@@ -127,20 +126,63 @@ signed char Si4707::getFreqOffset()
   return (signed char) command_RSQ_Status(7);
 }
 
-// Prints the status value of the SAME status command
-// Work still do be done on this function. (Haven't had a WSW recently!)
-void Si4707::printSAMEStatus()
+// Returns the SAME state
+// 0 = End of message
+// 1 = Preamble detected
+// 2 = Receiving SAME header message
+// 3 = SAME header message complete
+byte Si4707::getSAMEState()
 {
-  byte sameStatus = command_SAME_Status(2);
-  if (!sameStatus)
-    Serial.println("No SAME message detected");
-  else
-  {
-    Serial.print("SAME status: ");
-    Serial.println(sameStatus);
-    Serial.print("Message length: ");
-    Serial.println(command_SAME_Status(3));
+  byte buffer[14]; // Response buffer
+  command_SAME_Status(0, 0, buffer);
+  return buffer[2]; // Return second byte
+}
+
+// Returns the SAME message size
+byte Si4707::getSAMESize()
+{
+  byte buffer[14]; // Response buffer
+  command_SAME_Status(0, 0, buffer);
+  return buffer[3]; // Return third byte
+}
+
+// Returns the SAME message
+void Si4707::getSAMEMessage(byte size, byte *message)
+{
+  byte returnAddress = 0; // Address counter
+  byte buffer[14]; // Response buffer
+  // Retrive full address
+  for (int a = 0; a < size / 8; a++)
+    {
+      command_SAME_Status(0, returnAddress, buffer);
+      for (int b = 0; b < 8; b++)
+        {
+          message[returnAddress] = buffer[b + 6];
+          returnAddress++;
+        }
+    }
+  // Retrive partitial address
+  if (size % 8 > 0) {
+    command_SAME_Status(0, returnAddress, buffer);
+    for (int c = 0; c < size % 8; c++)
+      {
+        message[returnAddress] = buffer[c + 6];
+        returnAddress++;
+      }
   }
+}
+
+// Clear SAME message buffer
+void Si4707::clearSAMEBuffer()
+{
+  byte buffer[14];
+  command_SAME_Status(2, 0, buffer);
+}
+
+// Returns true if the 1050 kHz alert tone is present in weather band radio
+byte Si4707::getASQ()
+{
+  return command_ASQ_Status(2) & 0x1;
 }
 
 // Depending on the value of the mute boolean, this function will either
@@ -157,6 +199,20 @@ void Si4707::setVolume(int vol)
 {
   vol = constrain(vol, 0, 63); // vol should be between 0 and 63
   setProperty(PROPERTY_RX_VOLUME, vol);
+}
+
+// Set SNR threshold for valid channels
+void Si4707::setSNR(unsigned int snr)
+{
+  snr = constrain(snr, 0, 127); // snr should be between 0 and 127
+  setProperty(PROPERTY_WB_VALID_SNR_THRESHOLD, snr);
+}
+
+// Set RSSI threshold for valid channels
+void Si4707::setRSSI(unsigned int rssi)
+{
+  rssi = constrain(rssi, 0, 127); // rssi should be between 0 and 127
+  setProperty(PROPERTY_WB_VALID_RSSI_THRESHOLD, rssi);
 }
 
 /* Si4707_system_functions contains the nitty gritty system
@@ -213,7 +269,12 @@ byte Si4707::command_Tune_Freq(unsigned int frequency)
   cmd[3] = (uint8_t)(frequency & 0x00FF);
   writeCommand(4, cmd, 1, rsp);
 
-  delay(500); // Delay required to allow time to tune
+  byte status = 0;
+  int i = 40; // wait 2 sec to tune
+  while (--i && !(status&0x01)) {
+    status = command_Get_Int_Status();
+    delay(50);
+  }
 
   return (command_Tune_Status(1, 1) >> 8);
 }
@@ -259,8 +320,9 @@ byte Si4707::command_Get_Rev(byte returnIndex)
 
   return rsp[returnIndex];
 }
+
 /* command_SAME_Status() sends the WB_SAME_STATUS command and
-  returns the requested byte in the response
+  returns the requested data address
 
   Arguments (2 bytes):
     (0): ()()()()()()(CLRBUF)(INTACK)
@@ -272,19 +334,15 @@ byte Si4707::command_Get_Rev(byte returnIndex)
     (3): MSGLEN[7:0]
     (4): Confidence of data bytes 7-4
     (5): Confidence of data bytes 3-0
-    (6-13): DATA0, DATA1, ..., DATA7
-
-  This fucntion needs some work... */
-byte Si4707::command_SAME_Status(byte returnIndex)
+    (6-13): DATA0, DATA1, ..., DATA7 */
+void Si4707::command_SAME_Status(byte setArgument, byte returnAddress, byte * returnData)
 {
   cmd[0] = COMMAND_WB_SAME_STATUS;
-  cmd[1] = 0;
-  cmd[2] = 0;
-
-  writeCommand(3, cmd, 14, rsp);
-
-  return rsp[returnIndex];
+  cmd[1] = setArgument;
+  cmd[2] = returnAddress;
+  writeCommand(3, cmd, 14, returnData);
 }
+
 /* WB_RSQ_STATUS (0x53) - Returns status information about
   received signal quality - RSSI, SNR, freq offset.
    Argument (1 byte):
@@ -305,6 +363,25 @@ byte Si4707::command_RSQ_Status(byte returnIndex)
   cmd[1] = 0;
 
   writeCommand(2, cmd, 8, rsp);
+
+  return rsp[returnIndex];
+}
+
+/* WB_ASQ_STATUS (0x55) - Returns status information about
+  the 1050 kHz alert tone in weather band radio
+   Argument (1 byte):
+     (0) bit 0: Interrupt acknowledge
+   Response (3 bytes):
+     (0) Status (Should have CTS bit (7) set)
+     (1) RESP1: ()()()()()()(ALERTOFF_INT)(ALERTON_INT)
+     (2) RESP2: ()()()()()()()(ALERT) */
+byte Si4707::command_ASQ_Status(byte returnIndex)
+{
+
+  cmd[0] = COMMAND_WB_ASQ_STATUS;
+  cmd[1] = 0;
+
+  writeCommand(2, cmd, 3, rsp);
 
   return rsp[returnIndex];
 }
@@ -389,13 +466,12 @@ void Si4707::setProperty(unsigned int propNumber, unsigned int propValue)
 
 // Read a specified number of bytes via the I2C bus.
 // Will timeout if there is no response from the address.
-void Si4707::i2cReadBytes(byte number_bytes, byte * data_in)
+void Si4707::i2cReadBytes(byte number_bytes, byte *data_in)
 {
-  int timeout = 1000;
+  int timeout = 100000;
 
   Wire.requestFrom((byte) SI4707_ADDRESS, number_bytes);
-  while ((Wire.available() < number_bytes) && (--timeout))
-    ;
+  while ((Wire.available() < number_bytes) && (--timeout));
   while((number_bytes--) && timeout)
   {
     *data_in++ = Wire.read();
@@ -413,4 +489,3 @@ void Si4707::i2cWriteBytes(uint8_t number_bytes, uint8_t *data_out)
   }
   Wire.endTransmission();
 }
-

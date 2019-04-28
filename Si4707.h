@@ -11,14 +11,13 @@
   #define SI4707_ADDRESS 0b0010001
 #endif
 
-
 class Si4707 {
 private:
   // Pin definitions:
   // (If desired, these pins can be moved to other digital pins)
   // SEN is optional, if not used, make sure SEN_ADDRESS is 1
-  int senPin;
   int rstPin;
+  int senPin;
   // Not defined, because they must be connected to A4 and A5,
   //  are SDIO and SCLK.
 
@@ -31,8 +30,9 @@ private:
   byte command_Tune_Freq(unsigned int frequency);
   unsigned int command_Tune_Status(byte intAck, byte returnIndex);
   byte command_Get_Rev(byte returnIndex);
-  byte command_SAME_Status(byte returnIndex);
+  void command_SAME_Status(byte setArgument, byte returnAddress, byte * returnData);
   byte command_RSQ_Status(byte returnIndex);
+  byte command_ASQ_Status(byte returnIndex);
   byte command_Get_Int_Status(void);
   void waitForCTS(void);
   void writeCommand(byte cmdSize, byte * command, byte replySize, byte * reply);
@@ -41,18 +41,24 @@ private:
   void i2cReadBytes(byte number_bytes, byte * data_in);
   void i2cWriteBytes(uint8_t number_bytes, uint8_t *data_out);
   byte initSi4707();
+
 public:
   Si4707(int _rstPin, int _senPin);
   boolean begin();
-  byte setWBFrequency(long freq);
+  byte setWBFrequency(unsigned long freq);
   void tuneWBFrequency(signed char increment);
   unsigned int getWBFrequency();
+  boolean getRSQ();
   byte getRSSI();
   byte getSNR();
   signed char getFreqOffset();
-  void printSAMEStatus();
+  byte getSAMEState();
+  byte getSAMESize();
+  void getSAMEMessage(byte size, byte message[]);
+  void clearSAMEBuffer();
+  byte getASQ();
   void setMuteVolume(boolean mute);
   void setVolume(int vol);
-
+  void setSNR(unsigned int snr);
+  void setRSSI(unsigned int rssi);
 };
-
